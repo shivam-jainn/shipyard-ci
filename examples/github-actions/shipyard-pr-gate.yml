@@ -21,6 +21,8 @@ jobs:
         uses: shivam-jainn/shipyard-ci@v1
         with:
           path: 'evalset/'
+          # stable (default) | test | dev   -- or pin: version: 'v0.1.0'
+          channel: 'stable'
           post-comment: 'true'
           github-token: ${{ secrets.GITHUB_TOKEN }}
         env:

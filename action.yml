@@ -6,10 +6,14 @@ branding:
   color: 'blue'
 
 inputs:
-  version:
-    description: 'Shipyard CLI version to install (defaults to latest)'
+  channel:
+    description: 'Shipyard release channel to install: stable, test, or dev'
     required: false
-    default: 'latest'
+    default: 'stable'
+  version:
+    description: 'Pin an exact version, e.g. v0.1.0. Leave empty to track the channel.'
+    required: false
+    default: ''
   path:
     description: 'Path to eval or evalset directory'
     required: true
@@ -49,22 +53,27 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: '1.26'
-        cache: true
-
     - name: Install Shipyard CLI
       shell: bash
+      env:
+        # shipyard-core is a private repository, so `go install` can never work
+        # here: the Go toolchain rejects a module whose go.mod carries a
+        # filesystem replace. Installation goes through the CLI's published
+        # release artifacts, resolved by channel.
+        CHANNEL: ${{ inputs.channel }}
+        VERSION: ${{ inputs.version }}
       run: |
-        echo "Installing Shipyard CLI..."
+        set -euo pipefail
+        echo "Installing Shipyard CLI (channel=$CHANNEL, version=${VERSION:-channel head})..."
         if command -v shipyard >/dev/null 2>&1; then
-          echo "Shipyard already installed: $(shipyard --version 2>/dev/null || echo 'custom')"
+          echo "::notice::shipyard already present: $(shipyard version | head -n1)"
         else
-          echo "Installing shipyard binary..."
-          go install "github.com/shivam-jainn/shipyard-cli/cmd/shipyard@${{ inputs.version }}"
+          args="--channel $CHANNEL"
+          if [ -n "$VERSION" ]; then args="$args --version $VERSION"; fi
+          curl -fsSL https://raw.githubusercontent.com/shivam-jainn/shipyard-cli/main/install.sh \
+            | sh -s -- $args --yes --install-dir /usr/local/bin
         fi
+        shipyard version
 
     - name: Execute Shipyard Evaluation
       id: run-eval

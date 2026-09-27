@@ -30,6 +30,50 @@ When an autonomous coding or workflow agent regresses on prompt instructions, le
 
 ---
 
+## How the CLI Is Installed
+
+`shipyard-core`, the evaluation engine, is a **private** repository. The CLI depends on it through a filesystem `replace` directive, and the Go toolchain explicitly refuses to `go install` any module whose `go.mod` contains one:
+
+```
+The go.mod file for the module providing named packages contains one or
+more replace directives. It must not contain directives that would cause
+it to be interpreted differently than if it were the main module.
+```
+
+So every integration here installs the CLI from its **published release artifacts** via [`shipyard-cli`](https://github.com/shivam-jainn/shipyard-cli)'s `install.sh`, which verifies SHA256 checksums. There is no `go install` path, by design.
+
+### Release channels
+
+Every integration accepts a channel so a pipeline can track a moving target or a fixed version:
+
+| Channel | Tracks | Use for |
+| :--- | :--- | :--- |
+| `stable` (default) | latest non-prerelease | production pipelines |
+| `test` | latest `-alpha` / `-beta` / `-rc` | validating a new CLI against your evals before it ships |
+| `dev` | latest `-dev` build | debugging the CLI itself |
+
+**Pin an exact version in production.** Track the channel while you integrate, then pin once you are satisfied:
+
+```yaml
+uses: shivam-jainn/shipyard-ci@v1
+with:
+  path: 'evalset/'
+  channel: 'stable'
+  version: 'v0.1.0'   # exact, immutable
+```
+
+| Platform | Channel | Version pin |
+| :--- | :--- | :--- |
+| GitHub Actions | `channel:` input | `version:` input |
+| GitLab CI | `SHIPYARD_CHANNEL` variable | `SHIPYARD_VERSION` variable |
+| Jenkins | `CHANNEL` parameter | `VERSION` parameter |
+| Groovy library | `channel:` config | `version:` config |
+| Argo | `ghcr.io/shivam-jainn/shipyard-cli:<tag>` | pin the digest |
+
+To see exactly what a pipeline ran, `shipyard version` reports the version, the CLI commit, the engine commit it was built against, and the channel.
+
+---
+
 ## 1. GitHub Actions Quickstart
 
 Add `.github/workflows/agent-gate.yml` to your repository:
