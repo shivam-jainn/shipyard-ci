@@ -1,0 +1,23 @@
+stages:
+  - test
+
+shipyard-agent-eval:
+  stage: test
+  image: golang:1.26-bookworm
+  services:
+    - docker:dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    EVAL_PATH: "evalset/"
+    AGENT: "claude-code"
+  before_script:
+    - go install github.com/shivam-jainn/shipyard-cli/cmd/shipyard@latest
+    - export PATH=$PATH:$(go env GOPATH)/bin
+  script:
+    - shipyard run "$EVAL_PATH" --agent "$AGENT"
+  artifacts:
+    when: always
+    paths:
+      - $EVAL_PATH/rollouts/
+    expire_in: 14 days

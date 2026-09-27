@@ -1,0 +1,58 @@
+pipeline {
+    agent {
+        docker {
+            image 'golang:1.26-bookworm'
+            args '-u root -v /var/run/docker.sock:/var/run/docker.sock'
+        }
+    }
+
+    parameters {
+        string(name: 'EVAL_PATH', defaultValue: 'evalset/', description: 'Evaluation directory or suite')
+        string(name: 'AGENT', defaultValue: 'claude-code', description: 'Agent driver override')
+        choice(name: 'MODEL', choices: ['gpt-4o', 'claude-3-5-sonnet-20241022', 'gemini-1.5-pro'], description: 'Model override')
+    }
+
+    environment {
+        OPENAI_API_KEY = credentials('openai-api-key')
+        ANTHROPIC_API_KEY = credentials('anthropic-api-key')
+    }
+
+    stages {
+        stage('Setup Shipyard') {
+            steps {
+                sh '''
+                    echo "Checking / Installing Shipyard CLI..."
+                    go install github.com/shivam-jainn/shipyard-cli/cmd/shipyard@latest || true
+                    export PATH=$PATH:$(go env GOPATH)/bin
+                    shipyard --version || echo "Shipyard loaded"
+                '''
+            }
+        }
+
+        stage('Execute Agent Evals') {
+            steps {
+                sh '''
+                    export PATH=$PATH:$(go env GOPATH)/bin
+                    echo "Running Shipyard CI Gate..."
+                    shipyard run ${EVAL_PATH} \
+                        --agent ${AGENT} \
+                        --model ${MODEL} \
+                        --run-id "jenkins-build-${BUILD_NUMBER}"
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            // The engine writes rollouts to <eval-path>/rollouts/<run-id>/
+            archiveArtifacts artifacts: "${EVAL_PATH}rollouts/**", fingerprint: true, allowEmptyArchive: true
+        }
+        failure {
+            echo "Shipyard Agent regression gate failed! Check archived ATIF rollouts."
+        }
+        success {
+            echo "All agent benchmarks passed with target scores!"
+        }
+    }
+}

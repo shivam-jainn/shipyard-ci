@@ -1,0 +1,122 @@
+name: 'Shipyard Agent Evaluation Action'
+description: 'Run reproducible autonomous AI agent evaluations and regression benchmarks with Shipyard'
+author: 'Shipyard Team'
+branding:
+  icon: 'anchor'
+  color: 'blue'
+
+inputs:
+  version:
+    description: 'Shipyard CLI version to install (defaults to latest)'
+    required: false
+    default: 'latest'
+  path:
+    description: 'Path to eval or evalset directory'
+    required: true
+    default: 'evalset/'
+  agent:
+    description: 'Agent override (e.g. claude-code, codex, langgraph)'
+    required: false
+    default: ''
+  provider:
+    description: 'LLM Provider override (e.g. openai, anthropic, gemini)'
+    required: false
+    default: ''
+  model:
+    description: 'Model override (e.g. gpt-4o, claude-3-5-sonnet-20241022)'
+    required: false
+    default: ''
+  post-comment:
+    description: 'Automatically post evaluation summary report as a PR comment'
+    required: false
+    default: 'true'
+  github-token:
+    description: 'GitHub token for posting PR comments'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: 'Shipyard run exit code'
+    value: ${{ steps.run-eval.outputs.exit_code }}
+  rollout-dir:
+    description: 'Path to generated ATIF trajectory rollout directory'
+    value: ${{ steps.run-eval.outputs.rollout_dir }}
+  summary-markdown:
+    description: 'Markdown summary of eval scores and pass/fail results'
+    value: ${{ steps.report.outputs.summary_md }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26'
+        cache: true
+
+    - name: Install Shipyard CLI
+      shell: bash
+      run: |
+        echo "Installing Shipyard CLI..."
+        if command -v shipyard >/dev/null 2>&1; then
+          echo "Shipyard already installed: $(shipyard --version 2>/dev/null || echo 'custom')"
+        else
+          echo "Installing shipyard binary..."
+          go install "github.com/shivam-jainn/shipyard-cli/cmd/shipyard@${{ inputs.version }}"
+        fi
+
+    - name: Execute Shipyard Evaluation
+      id: run-eval
+      shell: bash
+      run: |
+        EXTRA_FLAGS=""
+        if [ -n "${{ inputs.agent }}" ]; then
+          EXTRA_FLAGS="$EXTRA_FLAGS --agent ${{ inputs.agent }}"
+        fi
+        if [ -n "${{ inputs.provider }}" ]; then
+          EXTRA_FLAGS="$EXTRA_FLAGS --provider ${{ inputs.provider }}"
+        fi
+        if [ -n "${{ inputs.model }}" ]; then
+          EXTRA_FLAGS="$EXTRA_FLAGS --model ${{ inputs.model }}"
+        fi
+        ROLLOUT_ID="pr-${{ github.event.pull_request.number || github.run_id }}"
+        echo "rollout_dir=${{ inputs.path }}/rollouts/$ROLLOUT_ID" >> "$GITHUB_OUTPUT"
+
+        set +e
+        shipyard run "${{ inputs.path }}" --run-id "$ROLLOUT_ID" $EXTRA_FLAGS
+        EXIT_CODE=$?
+        echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
+        set -e
+        exit $EXIT_CODE
+
+    - name: Generate PR Markdown Report
+      id: report
+      if: always()
+      shell: bash
+      run: |
+        python3 ${{ github.action_path }}/scripts/report_generator.py \
+          --rollout-dir "${{ inputs.path }}/rollouts" \
+          --output "shipyard-report.md" || true
+        if [ -f "shipyard-report.md" ]; then
+          echo "summary_md<<EOF" >> "$GITHUB_OUTPUT"
+          cat shipyard-report.md >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Post PR Comment
+      if: always() && inputs.post-comment == 'true' && github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require('fs');
+          if (fs.existsSync('shipyard-report.md')) {
+            const body = fs.readFileSync('shipyard-report.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+          }
