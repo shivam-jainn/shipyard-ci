@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/shivam-jainn/shipyard-ci/actions"><img src="https://img.shields.io/badge/CI-Argo%20%7C%20GHA%20%7C%20Jenkins-blueviolet.svg" alt="CI Engines"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Proprietary-red.svg" alt="License: Proprietary"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Shipyard%20(source--available)-blue.svg" alt="License: Shipyard source-available"></a>
 </p>
 
 ---
