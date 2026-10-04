@@ -25,7 +25,7 @@ concurrency:
 jobs:
   validate:
     name: Validate templates
-    runs-on: [ self-hosted, linux, ARM64, pi ]
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4

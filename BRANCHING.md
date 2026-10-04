@@ -71,8 +71,10 @@ A broken template on `main` is worth fixing this way rather than by pushing to
 
 ## CI, and where it runs
 
-Everything runs on the Raspberry Pi (`self-hosted, linux, ARM64, pi`). This
-repository has no hosted-runner jobs.
+CI runs on a GitHub-hosted runner. The whole job is a few seconds of YAML
+parsing and shell syntax checking, so there is nothing here that a self-hosted
+runner would make faster, and keeping the Pi out of it leaves that machine free
+for the repositories whose builds actually take minutes.
 
 | Check | What it catches |
 |---|---|
