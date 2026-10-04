@@ -1,0 +1,139 @@
+name: Promote
+
+# Moves code up one tier. Never two, and never sideways.
+#
+#   develop ──▶ staging   pre-production
+#   staging ──▶ main      production
+#
+# shipyard-ci publishes no versioned artifacts. Its "production" is the set of
+# templates users copy into their own pipelines, so the tier that matters is
+# `main`: a consumer who reads `main` should get templates that have been
+# exercised in a pre-production environment first.
+#
+# Run it with:  gh workflow run promote.yml --repo shivam-jainn/shipyard-ci
+#
+# Runs on ubuntu-latest because it drives the GitHub API through the `gh` CLI,
+# which is not installed on the runner image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Tier to promote into'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      dry_run:
+        description: 'Open the PR but do not merge'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ci-promote-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Promote to ${{ inputs.target }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the tier
+        id: tier
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+          # The mapping is the tier policy in one place. A promotion that is not
+          # listed here has no route, which is what makes skipping a level
+          # impossible rather than merely discouraged.
+          case "$TARGET" in
+            staging)    SOURCE=develop; DEST=staging ;;
+            production) SOURCE=staging; DEST=main ;;
+            *) echo "::error::unknown target '$TARGET'"; exit 1 ;;
+          esac
+
+          git fetch origin "$SOURCE" "$DEST"
+          echo "source=$SOURCE" >> "$GITHUB_OUTPUT"
+          echo "dest=$DEST"     >> "$GITHUB_OUTPUT"
+          echo "$SOURCE ($(git rev-parse --short "origin/$SOURCE")) -> $DEST ($(git rev-parse --short "origin/$DEST"))"
+
+      - name: Check there is something to promote
+        id: ahead
+        env:
+          SOURCE: ${{ steps.tier.outputs.source }}
+          DEST: ${{ steps.tier.outputs.dest }}
+        run: |
+          set -euo pipefail
+          # An empty promotion is not an error worth failing on, but it must not
+          # silently produce a PR either: report it and stop.
+          if git merge-base --is-ancestor "origin/$DEST" "origin/$SOURCE"; then
+            echo "::notice::$DEST already contains everything on $SOURCE"
+            echo "promotable=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "promotable=true" >> "$GITHUB_OUTPUT"
+            git log --oneline "origin/$DEST..origin/$SOURCE" | sed 's/^/  /'
+          fi
+
+      - name: Open the promotion pull request
+        id: pr
+        if: steps.ahead.outputs.promotable == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE: ${{ steps.tier.outputs.source }}
+          DEST: ${{ steps.tier.outputs.dest }}
+        run: |
+          set -euo pipefail
+
+          if [ "$DEST" = "main" ]; then
+            TITLE="promote: staging to production"
+            BODY="Promotes \`staging\` to \`main\`.
+
+          \`main\` is what consumers copy from. This is the point at which the
+          integration templates become the versions users are expected to adopt."
+          else
+            TITLE="promote: develop to staging"
+            BODY="Promotes \`develop\` to \`staging\`.
+
+          Promoted changes are exercised against a real pipeline before
+          \`main\` offers them to consumers."
+          fi
+
+          # An open PR on the same hop means a promotion is already in flight;
+          # opening a second one would race the first.
+          EXISTING="$(gh pr list --base "$DEST" --head "$SOURCE" --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            echo "::notice::promotion #$EXISTING ($SOURCE -> $DEST) is already open"
+            echo "number=$EXISTING" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          URL="$(gh pr create \
+            --base "$DEST" --head "$SOURCE" \
+            --title "$TITLE" --body "$BODY")"
+          echo "::notice::opened $URL"
+          echo "number=$(gh pr view "$URL" --json number --jq .number)" >> "$GITHUB_OUTPUT"
+
+      - name: Merge once checks pass
+        if: steps.pr.outputs.number != '' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          # --auto defers the merge to the moment the required checks go green,
+          # so a promotion can never land ahead of a failing or pending gate.
+          gh pr merge "$NUMBER" --squash --auto
+          echo "::notice::merge queued; lands once required checks pass"
