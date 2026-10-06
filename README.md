@@ -59,7 +59,7 @@ uses: shivam-jainn/shipyard-ci@v1
 with:
   path: 'evalset/'
   channel: 'stable'
-  version: 'v0.1.0'   # exact, immutable
+  version: 'v0.0.1'   # exact, immutable
 ```
 
 | Platform | Channel | Version pin |
